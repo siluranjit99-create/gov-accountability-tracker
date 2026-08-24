@@ -19,4 +19,10 @@ router.post('/:id', (req, res) => {
   res.status(201).json({ pinned: true });
 });
 
+// DELETE /api/pins/:id   <-- NEW: needed so the frontend can unpin an issue
+router.delete('/:id', (req, res) => {
+  db.prepare('DELETE FROM pins WHERE issue_id = ?').run(req.params.id);
+  res.json({ pinned: false });
+});
+
 module.exports = router;
