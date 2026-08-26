@@ -1,76 +1,84 @@
-const express = require('express');
-const router = express.Router();
-const db = require('../db');
+// issueStore.js
+// Single point of contact with the backend. Every page talks to the API only
+// through these functions.
+//
+// Locally (opened via Live Server / npx serve on your laptop) the backend runs
+// as its own process on port 4000, so we call it directly.
+// Once deployed to EC2, nginx reverse-proxies /api/* to the backend on the
+// same box - so the browser should call a relative path, not localhost.
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:4000'
+    : '';
 
-const RESOLVE_THRESHOLD = 3; // confirmations needed to auto-mark solved
+async function request(path, options = {}) {
+    const res = await fetch(`${API_BASE}${path}`, {
+        headers: { 'Content-Type': 'application/json' },
 
-// GET /api/issues?category=roads&sort=trending
-router.get('/', (req, res) => {
-  const { category, sort } = req.query;
-  let query = 'SELECT * FROM issues';
-  const params = [];
+        ...options,
+    });
+    if (!res.ok) {
+        const text = await res.text().catch(() => '');
+        throw new Error(`Request failed (${res.status}): ${text}`);
+    }
+    return res.json();
+}
 
-  if (category) {
-    query += ' WHERE category = ?';
-    params.push(category);
-  }
+const issueStore = {
+    // GET /api/issues?category=&sort=
+    async getIssues(filters = {}) {
+        const params = new URLSearchParams();
+        if (filters.category) params.set('category', filters.category);
+        if (filters.sort) params.set('sort', filters.sort);
+        const qs = params.toString();
+        return request(`/api/issues${qs ? `?${qs}` : ''}`);
+    },
 
-  if (sort === 'newest') query += ' ORDER BY created_at DESC';
-  else if (sort === 'oldest') query += ' ORDER BY created_at ASC';
-  else query += ' ORDER BY upvote_count DESC'; // trending default
+    // POST /api/issues
+    async postIssue(data) {
+        return request('/api/issues', { method: 'POST', body: JSON.stringify(data) });
+    },
 
-  res.json(db.prepare(query).all(...params));
-});
+    // POST /api/issues/:id/upvote
+    async upvote(issueId) {
+        return request(`/api/issues/${issueId}/upvote`, { method: 'POST' });
+    },
 
-// POST /api/issues
-router.post('/', (req, res) => {
-  const { title, description, category, photo_url, lat, lng } = req.body;
-  const created_at = new Date().toISOString();
+    // POST /api/issues/:id/resolve
+    async markResolved(issueId) {
+        return request(`/api/issues/${issueId}/resolve`, { method: 'POST' });
+    },
 
-  const result = db.prepare(`
-    INSERT INTO issues (title, description, category, photo_url, lat, lng, created_at)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
-  `).run(title, description, category, photo_url, lat, lng, created_at);
+    // GET /api/issues/:id/comments
+    async getComments(issueId) {
+        return request(`/api/issues/${issueId}/comments`);
+    },
 
-  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(result.lastInsertRowid);
-  res.status(201).json(issue);
-});
+    // POST /api/issues/:id/comments
+    async postComment(issueId, authorName, text, isResolutionConfirmation = false) {
+        return request(`/api/issues/${issueId}/comments`, {
+            method: 'POST',
+            body: JSON.stringify({
+                author_name: authorName,
+                text,
+                is_resolution_confirmation: isResolutionConfirmation,
+            }),
+        });
+    },
 
-// POST /api/issues/:id/upvote
-router.post('/:id/upvote', (req, res) => {
-  db.prepare('UPDATE issues SET upvote_count = upvote_count + 1 WHERE id = ?').run(req.params.id);
-  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
-  res.json(issue);
-});
+    // POST /api/pins/:id
+    async pinIssue(issueId) {
+        return request(`/api/pins/${issueId}`, { method: 'POST' });
+    },
 
-// POST /api/issues/:id/resolve  (called when a comment is a resolution confirmation)
-router.post('/:id/resolve', (req, res) => {
-  const issue = db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id);
-  const newCount = issue.resolve_confirmations + 1;
-  const newStatus = newCount >= RESOLVE_THRESHOLD ? 'resolved' : issue.status;
+    // DELETE /api/pins/:id
+    async unpinIssue(issueId) {
+        return request(`/api/pins/${issueId}`, { method: 'DELETE' });
+    },
 
-  db.prepare('UPDATE issues SET resolve_confirmations = ?, status = ? WHERE id = ?')
-    .run(newCount, newStatus, req.params.id);
+    // GET /api/pins
+    async getPinnedIssues() {
+        return request('/api/pins');
+    },
+};
 
-  res.json(db.prepare('SELECT * FROM issues WHERE id = ?').get(req.params.id));
-});
-
-// GET /api/issues/:id/comments
-router.get('/:id/comments', (req, res) => {
-  res.json(db.prepare('SELECT * FROM comments WHERE issue_id = ? ORDER BY created_at ASC').all(req.params.id));
-});
-
-// POST /api/issues/:id/comments
-router.post('/:id/comments', (req, res) => {
-  const { author_name, text, is_resolution_confirmation } = req.body;
-  const created_at = new Date().toISOString();
-
-  const result = db.prepare(`
-    INSERT INTO comments (issue_id, author_name, text, created_at, is_resolution_confirmation)
-    VALUES (?, ?, ?, ?, ?)
-  `).run(req.params.id, author_name, text, created_at, is_resolution_confirmation ? 1 : 0);
-
-  res.status(201).json(db.prepare('SELECT * FROM comments WHERE id = ?').get(result.lastInsertRowid));
-});
-
-module.exports = router;
+window.issueStore = issueStore;
