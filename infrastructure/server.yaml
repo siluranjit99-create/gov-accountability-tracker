@@ -94,7 +94,11 @@ Resources:
             VolumeType: gp2
             VolumeSize: 8
             DeleteOnTermination: true
-            Encrypted: true
+            # Not encrypted on purpose: the lab policy only grants kms:ListAliases,
+            # not kms:CreateGrant/GenerateDataKey/Decrypt - the actions actually
+            # needed to encrypt a new volume with the default AWS-managed key.
+            # Setting Encrypted: true here would fail with a KMS access-denied
+            # error under this exact policy.
       MetadataOptions:
         HttpTokens: required
         HttpPutResponseHopLimit: 1
