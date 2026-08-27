@@ -1,13 +1,19 @@
 // issueStore.js
 // Single point of contact with the backend. Every page talks to the API only
-// through these functions - swap API_BASE for a deployed URL later and
-// nothing else in the app needs to change.
-
-const API_BASE = 'http://localhost:4000';
+// through these functions.
+//
+// Locally (opened via Live Server / npx serve on your laptop) the backend runs
+// as its own process on port 4000, so we call it directly.
+// Once deployed to EC2, nginx reverse-proxies /api/* to the backend on the
+// same box - so the browser should call a relative path, not localhost.
+const API_BASE = (window.location.hostname === 'localhost' || window.location.hostname === '127.0.0.1')
+    ? 'http://localhost:4000'
+    : '';
 
 async function request(path, options = {}) {
     const res = await fetch(`${API_BASE}${path}`, {
         headers: { 'Content-Type': 'application/json' },
+
         ...options,
     });
     if (!res.ok) {
